@@ -1,7 +1,7 @@
 # stroke_prediction
-Who is a candidate for a stroke? What factors most contribute to that medical condition? 
+### Who is a candidate for a stroke? What factors most contribute to that medical condition? 
 
-Objective: through descriptive, predictive and prescriptive analytics,
+Objective of the project: through descriptive, predictive and prescriptive analytics,
 
 •	To identify potential causes of stroke
 
