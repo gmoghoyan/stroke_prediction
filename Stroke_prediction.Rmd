@@ -1,0 +1,536 @@
+---
+title: "IST707 - Final Project - Stroke of genius"
+author: "Garen Moghoyan"
+date: "6/17/2021"
+output:
+  word_document: default
+  pdf_document: default
+editor options:
+  chunk_output_type: console
+---
+
+## Introduction
+
+#### Per the World Health Organization, stroke is the second leading cause of death in the world with over 6 million casualties annually (11% of global deaths). Per the Centers for Disease Control and Preventions, more than 795,000 people suffer a stroke every year in the United States; of those, 610,000 are first-time strokes. 
+
+#### While the signs of a stroke are universal for both men and women (sudden numbness, sudden confusion, sudden trouble seeing and walking and sudden severe headache), there are nevertheless conditions that increase the risk of a stroke. A previous stroke, high blood pressure, high cholesterol, heart disease, diabetes and sickle cell disease all seem to play a role. 
+
+#### This study attempts to recognize potential causes of stroke by conducting clustering to identify trends (which factors seem to impact the likelihood of a stroke) and by buiding a model that predicts the likelihood of a stroke in patients. 
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library('rmarkdown')
+library('knitr')
+library('ggplot2')
+library('tidyverse')
+library('e1071')
+library('caret')
+library('forcats')
+library('arules')
+library('arulesViz')
+library('dplyr')
+library('RColorBrewer')
+library('klaR')
+library('rattle')
+library('imager')
+library('parallel')
+library('kernlab')
+library('caretEnsemble')
+library('questionr')
+library('factoextra')
+library('cluster')
+library('rpart')
+library('doParallel')
+library('randomForest')
+```
+
+
+## Analysis and Models
+
+### About the data
+#### The dataset can be found at www.kaggle.com/fedesoriano/stroke-prediction-dataset. It contains information about 5,110 patients, each with 12 variables, ranging from a system-assigned ID number to whether or not the patient suffered a stroke.
+
+
+```{r}
+# Importing the data
+strokeData<- read_csv("strokeData.csv", na=c(""))
+```
+
+### The data was imported into R. The first five lines of the dataset were used to get acquainted with the variables.
+```{r, echo=FALSE, results='asis'}
+kable(strokeData[1:5,])
+```
+#### Some values (hypertension, heart disease and stroke) are binary: a 1 indicates the patient suffers from that condition. The BMI variable seems to have N/A values. 
+
+### Checking for missing values, complete and incomplete rows and getting overall structure.
+```{r, echo=TRUE}
+length(which(is.na(strokeData)))
+nrow(strokeData[complete.cases(strokeData),])
+nrow(strokeData[!complete.cases(strokeData),])
+```
+
+```{r, include=FALSE}
+str(strokeData)
+```
+
+#### The data was imported in R and processed for analysis, the ID field was removed and missing (N/A) values were identified and dealt with. To manipulate it further, some values were converted to factor. 
+
+```{r, include=FALSE}
+# Removing ID field as it is not needed
+strokeData<-strokeData[-1]
+
+# Converting numeric to factor
+strokeData$stroke<-as.factor(strokeData$stroke)
+strokeData$hypertension<-as.factor(strokeData$hypertension)
+strokeData$heart_disease<-as.factor(strokeData$heart_disease)
+
+# Converting character to factor
+strokeData$gender<-as.factor(strokeData$gender)
+strokeData$ever_married<-as.factor(strokeData$ever_married)
+strokeData$work_type<-as.factor(strokeData$work_type)
+strokeData$Residence_type<-as.factor(strokeData$Residence_type)
+strokeData$smoking_status<-as.factor(strokeData$smoking_status)
+
+# Converting character to numeric
+strokeData$bmi<-as.numeric(strokeData$bmi)
+strokeData$age<-as.numeric(strokeData$age)
+strokeData$avg_glucose_level<-as.numeric(strokeData$avg_glucose_level)
+
+
+# Getting rid of N/A by using the mean of the column
+strokeData$bmi[is.na(strokeData$bmi)]<- mean(strokeData$bmi, na.rm = TRUE)
+
+strokeData$bmi<-round(strokeData$bmi, digits = 2)
+```
+
+```{r, echo=FALSE, results='asis'}
+kable(strokeData[1:5,])
+```
+
+```{r, eval=TRUE}
+# Checking prepped data
+summary(strokeData)
+```
+```{r,include=FALSE}
+str(strokeData)
+head(strokeData)
+```
+
+
+
+## Taking a look at the variables
+
+#### Gender distribution is as follows: 2,994 females (58.59%), 2,115 males (41.39%) and 1 other (0.02%). 
+```{r, eval=TRUE,include=TRUE}
+plot(strokeData$gender, main = "Gender distribution")
+table(strokeData$gender)
+```
+
+#### Most patients are between 35 and 65 years old. The median age is 45 and the average is 43. 
+```{r,eval=TRUE, include=TRUE}
+hist(strokeData$age, breaks = 20, main = "Age distribution" )
+boxplot(strokeData$age, main = "Age distribution")
+```
+
+#### Only 9.75% (498) of patients suffer from hypertension.
+```{r,eval=TRUE,include=TRUE}
+plot(strokeData$hypertension, main = "Hypertension")
+table(strokeData$hypertension)
+```
+
+#### Similarly, only 5.40% (276) of patients have heart disease.
+```{r,eval=TRUE,include=TRUE}
+plot(strokeData$heart_disease, main = "Heart Disease")
+table(strokeData$heart_disease)
+```
+
+#### Close to a third of the patients (1,757 or 34.38%) have never been married.
+```{r, eval=TRUE, include=TRUE}
+plot(strokeData$ever_married, main = "Ever married")
+table(strokeData$ever_married)
+```
+
+#### When looking at work types, those working in the private sector represent 57.24% of patients and that number shoots up to 66.13% when children are taking out of the population as they normally would not work before turning 18.
+```{r,eval=TRUE,include=TRUE}
+plot(strokeData$work_type, main = "Work type")
+table(strokeData$work_type)
+```
+
+
+#### Residence type is the only variable with close to equal proportions (50.8% live in an urban setting to 49.2% who are in rural areas).
+```{r,eval=TRUE,include=TRUE}
+plot(strokeData$Residence_type, main = "Residence type")
+table(strokeData$Residence_type)
+```
+
+#### The median value for 'average glucose level' is 92 while the average value is 106. Per Mayo Clinic guidelines, anything less than 140mg/dl is considered normal.
+```{r,eval=TRUE,include=TRUE}
+hist(strokeData$avg_glucose_level, breaks = 20, main = "Average glucose level")
+boxplot(strokeData$avg_glucose_level, main = "Average glucose level")
+```
+
+#### Per the CDC, the average Body Mass Index (BMI) in the US is 26.55 per adult. Our population has an average of 28.9 and an average of 28.4, slightly over the national figures.
+```{r,eval=TRUE, include=TRUE}
+hist(strokeData$bmi, breaks = 10, main = "Body Mass Index")
+boxplot(strokeData$bmi,main = "Body Mass Index")
+```
+
+#### While 1,892 (37%) of the patients have never smoked, the smoking status for another 1,544 (30%) of the patients is unknown, making it difficult to consider smoking as a reliable variable.
+```{r,eval=TRUE, include=TRUE}
+plot(strokeData$smoking_status, main = "Smoking status")
+table(strokeData$smoking_status)
+```
+
+#### There are 4,861 patients who have not suffered a stroke versus 249 who have. This 95%-5% split will lead to overfitting when building a model to predict stroke in patients. A sampling will be necessary in order to get a more accurate picture. 
+```{r,eval=TRUE, include=TRUE}
+plot(strokeData$stroke, main = "Stroke")
+table(strokeData$stroke)
+```
+
+## Models and analysis 
+### Association Rule Mining (ARM) is an interesting model to use in a medical case as it can help look for antecedents (symptoms) or consequents (diagnosis). In our case, ARM would help identify which pre-existing conditions most often lead to strokes.
+
+```{r,eval=TRUE}
+## Association Rule Mining
+strokeDataARM<-strokeData
+
+# Dividing age values into brackets
+strokeDataARM$age <- cut(strokeData$age, breaks = c(0,1,3,10,20,30,40,50,60,70,80,90,100),labels=c("babies","toddlers","children","teens", "twenties", "thirties", "forties", "fifties","sixties","seventies","eighties","nineties"))
+
+
+# Turning BMI into categorical intervals
+minBMI<-min(strokeDataARM$bmi)-1
+maxBMI<-max(strokeDataARM$bmi)
+bins<-5
+width<-(maxBMI-minBMI)/bins
+strokeDataARM$bmi<-cut(strokeDataARM$bmi, breaks = seq(minBMI,maxBMI, width))
+
+# Turning glucose level into categorical intervals
+minAGL<-min(strokeDataARM$avg_glucose_level)-1
+maxAGL<-max(strokeDataARM$avg_glucose_level)
+bins<-5
+width<-(maxAGL-minAGL)/bins
+strokeDataARM$avg_glucose_level<-cut(strokeDataARM$avg_glucose_level, breaks = seq(minAGL,maxAGL,width))
+```
+
+  
+## Generating rules
+### Initial try, with support of 0.01, confidence of 0.5 and minimum length of 2, sorted by lift and by confidence
+### The findings are consistent with what would be expected given the variables: toddlers are considered children, they are not married and do not suffer from hypertension. Nothing groundbreaking in those findings.
+```{r, include=FALSE}
+rules<-apriori(strokeDataARM, parameter = list(supp=0.01, conf=0.5, minlen=2))
+options(digits=2)
+summary(rules)
+inspect(rules[1:5])
+rulesLift<-head(sort(rules, by="lift"),10)
+rulesConfidence<-head(sort(rules, by="confidence"),10)
+```
+```{r,eval=TRUE}
+inspect(rulesConfidence[1:5])
+inspect(rulesLift[1:5])
+```
+```{r, include=FALSE}
+# Adding a maximum length of 3
+rules2<-apriori(strokeDataARM, parameter = list(supp=0.001, conf=0.08, maxlen=3))
+rules2Lift<-head(sort(rules2, by="lift"),10)
+inspect(rules2Lift[1:5])
+rules2Confidence<-head(sort(rules2, by="confidence"),10)
+inspect(rules2Confidence[1:5])
+```
+
+### Focusing on the stroke variable, various scenarios were ran with lhs and rhs being set to stroke=1 or 0
+### Stroke=1 to lhs
+### With stroke = 1 as a left-hand variable, the conclusions were as follows: patients who had suffered a stroke were likely to be in their seventies, suffered from hypertension, had above average glucose levels, were self-employed and were former smokers.
+```{r,eval=TRUE}
+rules3<-apriori(strokeDataARM, parameter = list(supp=0.01, conf=0.01, maxlen=3),
+                appearance = list(default="rhs", lhs="stroke=1"), control = list(verbose=F))
+rules3<-sort(rules3, decreasing = TRUE, by="lift")
+inspect(rules3[1:5])
+```
+
+### Stroke=1 to rhs
+### With stroke =1 as a right-hand variable, we can see that the leading causes of stroke are an advanced age (seventies), hypertension, high glucose level, be self-employed and be a former smoker.
+```{r,eval=TRUE}
+rules4<-apriori(strokeDataARM, parameter = list(supp=0.01, conf=0.01, maxlen=2),
+                appearance = list(default="lhs", rhs="stroke=1"), control = list(verbose=F))
+rules4<-sort(rules4, decreasing = TRUE, by="lift")
+inspect(rules4[1:5])
+```
+
+### Stroke=0 to lhs
+### With stroke set to 0 on the left-hand side, patients who were likely safe from a stroke had low average glucose levels, did not suffer from either hypertension or heart disease and were likely female.
+```{r,eval=TRUE}
+rules5<-apriori(strokeDataARM, parameter = list(supp=0.5, conf=0.5, maxlen=3),
+                appearance = list(default="rhs", lhs="stroke=0"), control = list(verbose=F))
+rules5<-sort(rules5, decreasing = TRUE, by="lift")
+inspect(rules5[1:5])
+```
+### Stroke=0 to rhs
+### Stroke=0 on the right-hand side indicates that in order to avoid a stroke,one has to not suffer from heart disease or hypertension, have below average glucose level, and be a female. 
+```{r,eval=TRUE}
+rules6<-apriori(strokeDataARM, parameter = list(supp=0.5, conf=0.6, maxlen=3),
+                appearance = list(default="lhs", rhs="stroke=0"), control = list(verbose=F))
+rules6<-sort(rules6, decreasing = TRUE, by="lift")
+inspect(rules6[1:6])
+```
+### Association Rule Mining can be a useful tool in medical diagnostics as it can help look for antecedents and prevent the development of a disease in a patient or look for consequents to establish healthy lifestyles and habits in order to avoid any medical complications in patients. 
+### Association Rule Mining is also useful in creating groupings and finding out patterns, many questions could thus be answered using ARM: "are females more likely to have hypertension?", "is residence type associated with heart disease?" or even "is Body Mass Index linked to age?"
+#
+#
+#
+
+### Clustering is another way of processing the data: by dividing it into clusters of similar items to look for similarities. As it is unsupervised, it should provide an insight into the natural groupings found within the data.
+```{r,eval=TRUE,include=FALSE}
+# Creating a new dataframe for clustering purposes
+strokeDataCluster<-strokeData
+
+# Converting categorical data into binary data
+strokeDataCluster$gender<-ifelse(strokeDataCluster$gender=='Female',1,0)
+strokeDataCluster$ever_married<-ifelse(strokeDataCluster$ever_married=='Yes',1,0)
+strokeDataCluster$Residence_type<-ifelse(strokeDataCluster$Residence_type=='Urban',1,0)
+strokeDataCluster$work_type<-unclass(strokeDataCluster$work_type)
+strokeDataCluster$smoking_status<-unclass(strokeDataCluster$smoking_status)
+```
+
+```{r,eval=TRUE,include=TRUE}
+# Deciding the number of clusters
+fviz_nbclust(strokeDataCluster, FUN=hcut, method="wss")
+```
+
+### Per the elbow method, 3 was the optimal number of clusters but clustering was also done with 4 and 5 centroids. 
+#
+#
+#### 
+```{r,eval=TRUE,include=TRUE}
+set.seed(20)
+
+
+## Running k-means with 3 clusters
+Clustersk3<-kmeans(strokeDataCluster,3)
+strokeDataCluster$Clustersk3<-as.factor(Clustersk3$cluster)
+str(Clustersk3)
+Clustersk3$centers
+
+# Plotting the results of k=3
+PlotClusk3<-clusplot(strokeDataCluster, strokeDataCluster$Clustersk3, 
+                     color=TRUE, shade=TRUE, labels=2, lines=0, main = "k=3",
+                     col.txt=Clustersk3$cluster)
+
+# Plotting work_type
+ggplot(data=strokeDataCluster, aes(x=work_type, fill=Clustersk3))+
+  geom_bar(stat = "count")+labs(title = "K=3")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+#Plotting smoking_status
+ggplot(data=strokeDataCluster, aes(x=smoking_status, fill=Clustersk3))+
+  geom_bar(stat = "count")+labs(title = "K=3")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+# Plotting residence_type
+ggplot(data=strokeDataCluster, aes(x=Residence_type, fill=Clustersk3))+
+  geom_bar(stat = "count")+labs(title = "K=3")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+
+## Running k-means with 4 clusters
+Clustersk4<-kmeans(strokeDataCluster,4)
+strokeDataCluster$Clustersk4<-as.factor(Clustersk4$cluster)
+str(Clustersk4)
+Clustersk4$centers
+
+
+# Plotting the results of k=4
+PlotClusk4<-clusplot(strokeDataCluster, strokeDataCluster$Clustersk4, 
+                    color=TRUE, shade=TRUE, labels=2, lines=0, main = "k=4",
+                    col.txt=Clustersk4$cluster)
+
+# Plotting work_type
+ggplot(data=strokeDataCluster, aes(x=work_type, fill=Clustersk4))+
+  geom_bar(stat = "count")+labs(title = "K=4")+
+  theme(plot.title = element_text(hjust = 0.5), 
+       text = element_text(size=15))
+
+# Plotting smoking_status
+ggplot(data=strokeDataCluster, aes(x=smoking_status, fill=Clustersk4))+
+  geom_bar(stat = "count")+labs(title = "K=4")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+# Plotting residence_type
+ggplot(data=strokeDataCluster, aes(x=Residence_type, fill=Clustersk4))+
+  geom_bar(stat = "count")+labs(title = "K=4")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+## Running k-means with 5 clusters
+Clustersk5<-kmeans(strokeDataCluster,5)
+strokeDataCluster$Clustersk5<-as.factor(Clustersk5$cluster)
+str(Clustersk5)
+Clustersk5$centers
+
+
+# Plotting the results of k=5
+PlotClusk5<-clusplot(strokeDataCluster, strokeDataCluster$Clustersk5, 
+                     color=TRUE, shade=TRUE, labels=2, lines=0, main = "k=5",
+                     col.txt=Clustersk5$cluster)
+
+# Plotting work_type
+ggplot(data=strokeDataCluster, aes(x=work_type, fill=Clustersk5))+
+  geom_bar(stat = "count")+labs(title = "K=5")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+#Plotting smoking_status
+ggplot(data=strokeDataCluster, aes(x=smoking_status, fill=Clustersk5))+
+  geom_bar(stat = "count")+labs(title = "K=5")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+# Plotting residence_type
+ggplot(data=strokeDataCluster, aes(x=Residence_type, fill=Clustersk5))+
+  geom_bar(stat = "count")+labs(title = "K=5")+
+  theme(plot.title = element_text(hjust = 0.5), 
+        text = element_text(size=15))
+
+
+
+```
+
+
+```{r,include=FALSE,eval=FALSE,echo=FALSE}
+### Hierarchical Clustering Algorithms (HAC)
+
+strokeDataHAC<-strokeData
+
+# Calculating distance in various ways
+distance<-dist(strokeDataHAC, method = "binary")
+distance2<-dist(strokeDataHAC, method = "canberra")
+distance3<-dist(strokeDataHAC, method = "euclidean")
+distance4<-dist(strokeDataHAC, method = "manhattan")
+distance5<-dist(strokeDataHAC, method = "maximum")
+distance6<-dist(strokeDataHAC, method = "minkowski", p=3)
+
+# Creating a loop to plot the various HACs
+hacloop<-c(2,3,4,5)
+for (y in hacloop) {
+  HAC<-hclust(distance3, method = "complete")
+  plot(HAC, cex=0.6, hang=-1, main = c("HAC Cluster Euclidean Complete",y,"Clusters"))
+  rect.hclust(HAC, k=y, border=2:5)
+  
+  HAC1<-hclust(distance3, method = "single")
+  plot(HAC1, cex=0.6, hang=-1, main = c("HAC Cluster Euclidean Single",y,"Clusters"))
+  rect.hclust(HAC1, k=y, border = 2:5)
+  
+  HAC2<-hclust(distance5, method = "complete")
+  plot(HAC2, cex=0.1, hang=-1, main = c("HAC Cluster Maximum Complete",y,"Clusters"))
+  rect.hclust(HAC2, k=y, border = 2:5)
+  
+  HAC3<-hclust(distance4, method = "complete")
+  plot(HAC3, cex=0.6, hang=-1, main = c("HAC Cluster Manhattan Complete",y,"Clusters"))
+  rect.hclust(HAC3, k=y, border = 2:5)
+  
+  HAC4<-hclust(distance2, method = "complete")
+  plot(HAC4, cex=0.6, hang=-1, main = c("HAC Cluster Canberra Complete",y,"Clusters"))
+  rect.hclust(HAC4, k=y, border = 2:5)
+  
+  HAC5<-hclust(distance6, method = "complete")
+  plot(HAC5, cex=0.6, hang=-1, main = c("HAC Cluster Minkowski Complete",y,"Clusters"))
+  rect.hclust(HAC5, k=y, border = 2:5)
+  
+  HAC6<-hclust(distance, method = "complete")
+  plot(HAC6, cex=0.6, hang=-1, main = c("HAC Cluster Binary Complete",y,"Clusters"))
+  rect.hclust(HAC6, k=y, border = 2:5)
+
+}
+```
+
+
+## Classification
+#### In the classification exercise, due to supervised learning taking place, testing and training datasets will be necessary. As seen previously, the stroke factor (which is the independent variable that is being measured) has an important disproportion with a 95-5 split. In order to manipulate and use classifiers, a sample dataset will need to be generated. As such a random sampling of 300 patients will be selected as the number of stroke cases is 249.
+#
+#### The training dataset was used with various classifier models and the results were processed through a confusion matrix. The results were as follows: decision tree and random forest had the highest accuracy values with 76% and 75% respectively. 
+#
+#### The final confusion matrices show very similar results for both models as both proved to be reliable classifying models for this dataset. 
+
+#### The decision tree shows nodes that make sense as stroke and other medical conditions often depend on age and other pre-existing conditions, such as hypertension, body mass index or heart disease. It is therefore not surprising to see the first node as age (<56), followed by glucose level (>=77) as those are variables often encountered in medical cases.
+
+
+```{r,include=TRUE}
+# Getting a random sample of the stroke-free patients to prevent over-fitting
+set.seed(20)
+sample1<-strokeData[strokeData$stroke==0,]
+table(sample1$stroke)
+
+sample1<-sample1[sample(1:nrow(sample1), size=300),]
+table(sample1$stroke)
+
+strokeSample<-rbind(strokeData[strokeData$stroke==1,],sample1)
+table(strokeSample$stroke)
+
+# Creating two datasets: train and  test
+split= sort(sample(nrow(strokeSample), nrow(strokeSample)*.4))
+train<-strokeSample[split,]
+test<-strokeSample[-split,]
+
+control=trainControl(method='cv', number =3)
+tree.model<-train(stroke~., data = train, method ='rpart', metric = 'Accuracy', trControl=control, tuneLength =5)
+svm.model<-train(stroke~., data = train, method = 'svmRadial', metric = 'Accuracy', trControl=control, tuneLength =5)
+rf.model <- train(stroke ~ ., data = train, method="rf", metric= 'Metric', trControl=control,
+                  tuneLength = 5)
+knn.model <- train(stroke ~ ., data = train, method="knn", metric= 'Metric', trControl=control,
+                   tuneLength = 5)
+
+# summarize accuracy of models
+results <- resamples(list(Decision_Tree=tree.model,SVM=svm.model,Random_Forest=rf.model,knn=knn.model))
+
+dotplot(results)
+
+cm<-function(m){
+  p=predict(m,strokeData)
+  q=confusionMatrix(table(pred=as.factor(p),truth=strokeData$stroke))
+  return(q)
+}
+```
+```{r,include=TRUE,eval=TRUE,echo=TRUE}
+cm(tree.model)
+#
+cm(svm.model)
+#
+cm(rf.model)
+#
+cm(knn.model)
+#
+print(tree.model)
+#
+print(svm.model)
+#
+print(rf.model)
+#
+print(knn.model)
+```
+## Creating a decision tree
+```{r,eval=TRUE,include=TRUE, echo=TRUE}
+# Tree 1
+DT1<-rpart(stroke~., data = train, method = "class", control = rpart.control(cp=0.0347))
+
+# Predicting the test dataset and plotting splits and the decision tree
+prediction1= predict(DT1, test, type="class")
+rsq.rpart(DT1)
+fancyRpartPlot(DT1)
+
+# Making a confusion matrix for correct/incorrect predictions
+table(stroke=prediction1, true=test$stroke)
+```
+
+## Creating a random forest
+```{r,eval=TRUE,include=TRUE,echo=TRUE}
+# RF
+RF<-randomForest(stroke~.,data = train,mtry=5)
+predictrf=predict(RF, test, type="class")
+# making a confusion matrix for correct/incorrect predictions
+table(stroke=predictrf, true=test$stroke)
+```
+```
